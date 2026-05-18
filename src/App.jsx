@@ -5,14 +5,18 @@ const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const BUCKET = "group-files";
 const ADMIN_PASSWORD = "starosta2024";
 
+// Цвета категорий
 const CAT = {
-  "Расписание": { color:"#e8789f", bg:"rgba(232,120,159,0.10)", dot:"#e8789f", grad:"linear-gradient(135deg,#fce8ef,#fde8f5)" },
-  "Лекции":     { color:"#e8956d", bg:"rgba(232,149,109,0.10)", dot:"#e8956d", grad:"linear-gradient(135deg,#fdeee6,#fdf6e8)" },
-  "Задания":    { color:"#7ab87a", bg:"rgba(122,184,122,0.10)", dot:"#7ab87a", grad:"linear-gradient(135deg,#ecf5ec,#e8f5e8)" },
-  "Другое":     { color:"#9b87c8", bg:"rgba(155,135,200,0.10)", dot:"#9b87c8", grad:"linear-gradient(135deg,#f0ecf8,#ece8f8)" },
+  "Расписание": { color:"#7c5cbf", bg:"rgba(124,92,191,0.10)", dot:"#7c5cbf", grad:"linear-gradient(135deg,#ede8f8,#e8e0f5)", light:"#f5f0fc" },
+  "Лекции":     { color:"#e8956d", bg:"rgba(232,149,109,0.10)", dot:"#e8956d", grad:"linear-gradient(135deg,#fdeee6,#fdf6e8)", light:"#fff7f2" },
+  "Задания":    { color:"#5aaa72", bg:"rgba(90,170,114,0.10)",  dot:"#5aaa72", grad:"linear-gradient(135deg,#e8f5ed,#dff2e5)", light:"#f2fbf5" },
+  "Другое":     { color:"#e8789f", bg:"rgba(232,120,159,0.10)", dot:"#e8789f", grad:"linear-gradient(135deg,#fce8ef,#fde8f5)", light:"#fff0f5" },
 };
 const CATS = Object.keys(CAT);
-const CARD_VARIANTS = ["default","wide-accent","gradient-bg","minimal","bold-cat"];
+
+const DAYS = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"];
+const TIMES = ["08:00–09:20","09:30–10:50","11:00–12:20","13:30–14:50","15:00–16:20","16:30–18:00"];
+const DEFAULT_SUBJECTS = ["Менеджмент организации","Экономическая теория","Маркетинг","Бухгалтерский учёт","Статистика","Иностранный язык"];
 
 function getFileType(fn) {
   const e = (fn||"").split(".").pop().toLowerCase();
@@ -24,6 +28,17 @@ function getFileType(fn) {
   if (["mp4","webm","mov"].includes(e)) return "video";
   if (["mp3","wav","m4a"].includes(e)) return "audio";
   return "other";
+}
+
+// Открывает файл локально — через прямую ссылку
+// Браузер сам предложит открыть в приложении
+function openFile(url, fileName) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.target = "_blank";
+  a.rel = "noreferrer";
+  // Не ставим download — браузер попробует открыть, иначе скачает
+  a.click();
 }
 
 const api = {
@@ -68,52 +83,53 @@ const api = {
     return (await r.json())[0];
   },
   async deleteFile(id) { await fetch(`${SB_URL}/rest/v1/files?id=eq.${id}`, { method:"DELETE", headers:api.h() }); },
+  // Расписание хранится в отдельной таблице
+  async getSchedule() {
+    const r = await fetch(`${SB_URL}/rest/v1/schedule?order=id.desc&limit=1`, { headers:api.h() });
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d[0]||null;
+  },
+  async saveSchedule(data) {
+    // Upsert с id=1
+    const r = await fetch(`${SB_URL}/rest/v1/schedule`, {
+      method:"POST",
+      headers:{...api.h(),Prefer:"return=representation,resolution=merge-duplicates"},
+      body:JSON.stringify({id:1,...data}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    return (await r.json())[0];
+  },
 };
 
-/* ─── FILE VIEWER ─── */
+/* ─── FILE VIEWER — только для PDF и изображений ─── */
 function FileViewer({ file, onClose }) {
   const type = getFileType(file.file_name);
-  const ext  = (file.file_name||"").split(".").pop().toUpperCase();
-  const gdocs = `https://docs.google.com/gviewer?embedded=true&url=${encodeURIComponent(file.file_url)}`;
   useEffect(() => {
     const h = e => e.key==="Escape"&&onClose();
     window.addEventListener("keydown",h);
     return ()=>window.removeEventListener("keydown",h);
   },[onClose]);
+
+  if (!["pdf","image","video","audio"].includes(type)) return null;
+
   return (
     <div style={{position:"fixed",inset:0,zIndex:1000,background:"rgba(10,5,8,.88)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column"}} onClick={onClose}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 20px",flexShrink:0}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0}}>
-          <span style={{background:"rgba(255,255,255,.1)",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:700,color:"rgba(255,255,255,.5)",fontFamily:"monospace",flexShrink:0}}>{ext}</span>
-          <span style={{fontSize:14,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{file.name}</span>
-        </div>
+        <span style={{fontSize:14,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{file.name}</span>
         <div style={{display:"flex",gap:8,flexShrink:0,marginLeft:12}}>
-          <a href={file.file_url} download={file.file_name} target="_blank" rel="noreferrer" style={{padding:"8px 16px",borderRadius:10,background:"rgba(255,255,255,.1)",color:"#fff",fontSize:12,fontWeight:600,textDecoration:"none"}}>Скачать</a>
+          <a href={file.file_url} download={file.file_name} style={{padding:"8px 16px",borderRadius:10,background:"rgba(255,255,255,.1)",color:"#fff",fontSize:12,fontWeight:600,textDecoration:"none"}}>Скачать</a>
           <button onClick={onClose} style={{width:36,height:36,borderRadius:10,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",fontSize:18}}>✕</button>
         </div>
       </div>
       <div style={{flex:1,padding:"0 20px 20px",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={e=>e.stopPropagation()}>
         {type==="pdf"&&<iframe src={file.file_url} style={{width:"100%",height:"100%",border:"none",borderRadius:16,background:"#fff"}} title={file.name}/>}
         {type==="image"&&<img src={file.file_url} alt={file.name} style={{maxWidth:"100%",maxHeight:"100%",borderRadius:16,objectFit:"contain",boxShadow:"0 20px 60px rgba(0,0,0,.5)"}}/>}
-        {["word","excel","ppt"].includes(type)&&(
-          <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:10}}>
-            <iframe src={gdocs} style={{width:"100%",flex:1,border:"none",borderRadius:16,background:"#fff"}} title={file.name}/>
-            <div style={{textAlign:"center",fontSize:12,color:"rgba(255,255,255,.35)"}}>Если не отображается — нажмите Скачать</div>
-          </div>
-        )}
         {type==="video"&&<video src={file.file_url} controls style={{maxWidth:"100%",maxHeight:"100%",borderRadius:16}}/>}
         {type==="audio"&&(
           <div style={{background:"rgba(255,255,255,.06)",borderRadius:24,padding:"40px 48px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:20}}>
-            <div style={{fontSize:64}}>🎵</div>
             <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{file.name}</div>
             <audio src={file.file_url} controls style={{width:300,maxWidth:"100%"}}/>
-          </div>
-        )}
-        {type==="other"&&(
-          <div style={{background:"rgba(255,255,255,.06)",borderRadius:24,padding:48,textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:16}}>
-            <div style={{fontSize:64}}>📄</div>
-            <div style={{fontSize:16,fontWeight:700,color:"#fff"}}>{file.name}</div>
-            <a href={file.file_url} download={file.file_name} target="_blank" rel="noreferrer" style={{padding:"12px 28px",borderRadius:14,background:"linear-gradient(135deg,#e8789f,#e8956d)",color:"#fff",fontWeight:700,fontSize:14,textDecoration:"none"}}>Скачать файл</a>
           </div>
         )}
       </div>
@@ -134,6 +150,7 @@ export default function App() {
   const [filterCat,setFilterCat] = useState("Все");
   const [isMobile,setIsMobile]   = useState(window.innerWidth<768);
   const [viewer,setViewer]       = useState(null);
+  const [schedule,setSchedule]   = useState(null);
 
   useEffect(()=>{ const h=()=>setIsMobile(window.innerWidth<768); window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h); },[]);
 
@@ -153,7 +170,10 @@ export default function App() {
 
   const load=useCallback(async()=>{
     setLoading(true);
-    try{ const[f,a]=await Promise.all([api.getFiles(),api.getAnns()]); setFiles(f); setAnns(a); }catch{}
+    try{
+      const[f,a,s]=await Promise.all([api.getFiles(),api.getAnns(),api.getSchedule()]);
+      setFiles(f); setAnns(a); setSchedule(s);
+    }catch{}
     finally{setLoading(false);}
   },[]);
 
@@ -175,12 +195,12 @@ export default function App() {
     {id:"admin",    label:"Панель",    icon:"◉"},
   ];
 
-  const shared={tab,isAdmin,setIsAdmin,setTab:goTab,isMobile,loading,files,anns,schedFiles,filteredFiles,filterCat,setFilterCat,showToast,load,setFiles,setAnns,setViewer};
+  const shared={tab,isAdmin,setIsAdmin,setTab:goTab,isMobile,loading,files,anns,schedFiles,filteredFiles,filterCat,setFilterCat,showToast,load,setFiles,setAnns,setViewer,schedule,setSchedule};
 
   return (
     <div style={{minHeight:"100vh",background:"#faf8f6",fontFamily:"'Montserrat',sans-serif"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;font-family:'Montserrat',sans-serif !important;}
         body{background:#faf8f6;}
         ::-webkit-scrollbar{width:4px;}
@@ -257,7 +277,6 @@ function MobileLayout({TABS,goTab,tab,isAdmin,setIsAdmin,setTab,showToast,...res
   return(
     <div style={{display:"flex",flexDirection:"column",minHeight:"100vh",paddingBottom:72}}>
       <header style={{background:"#fff",borderBottom:"1px solid #f0e8ec",padding:"16px 20px",position:"sticky",top:0,zIndex:50}}>
-        {/* FIX: шрифт шапки чуть крупнее на мобиле */}
         <div style={{fontSize:11,fontWeight:700,color:"#c8a0b0",letterSpacing:"0.1em",textTransform:"uppercase"}}>Экон. факультет</div>
         <div style={{fontSize:19,fontWeight:800,color:"#1a1015",marginTop:2}}>Менеджмент</div>
       </header>
@@ -270,7 +289,6 @@ function MobileLayout({TABS,goTab,tab,isAdmin,setIsAdmin,setTab,showToast,...res
             <div style={{width:38,height:28,borderRadius:10,background:tab===t.id?"linear-gradient(135deg,#fde8ef,#fdeee6)":"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s"}}>
               <span style={{fontSize:18,lineHeight:1,color:tab===t.id?"#e8789f":"#c4aab8"}}>{t.icon}</span>
             </div>
-            {/* FIX: текст навбара чуть крупнее */}
             <span style={{fontSize:11,fontWeight:tab===t.id?700:500}}>{t.label}</span>
           </button>
         ))}
@@ -280,42 +298,35 @@ function MobileLayout({TABS,goTab,tab,isAdmin,setIsAdmin,setTab,showToast,...res
 }
 
 /* ─── PAGES ─── */
-function Pages({tab,isAdmin,setIsAdmin,setTab,isMobile,loading,files,anns,schedFiles,filteredFiles,filterCat,setFilterCat,showToast,load,setFiles,setAnns,setViewer}){
+function Pages({tab,isAdmin,setIsAdmin,setTab,isMobile,loading,files,anns,schedFiles,filteredFiles,filterCat,setFilterCat,showToast,load,setFiles,setAnns,setViewer,schedule,setSchedule}){
   const pad={padding:isMobile?"20px 16px":"40px 44px",maxWidth:1000,margin:"0 auto",animation:"fadeUp .3s ease"};
 
   if(loading) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"60vh",flexDirection:"column",gap:16}}>
       <div style={{width:36,height:36,border:"3px solid #f0e0e8",borderTopColor:"#e8789f",borderRadius:"50%",animation:"spin .7s linear infinite"}}/>
-      {/* FIX: текст загрузки крупнее на мобиле */}
       <div style={{fontSize:isMobile?15:13,fontWeight:500,color:"#b09aa8"}}>Загрузка…</div>
     </div>
   );
 
-  /* ── DASHBOARD ── */
+  /* DASHBOARD */
   if(tab==="dashboard") return(
     <div style={pad}>
-      {/* FIX: на мобиле Hero полностью по центру */}
       <div style={{background:"linear-gradient(135deg,#fce8ef 0%,#fdeee6 50%,#fce8f5 100%)",borderRadius:24,padding:isMobile?"28px 24px":"36px 40px",marginBottom:20,position:"relative",overflow:"hidden",textAlign:isMobile?"center":"left"}}>
         <div style={{position:"absolute",top:-40,right:-40,width:180,height:180,borderRadius:"50%",background:"rgba(232,120,159,.08)",pointerEvents:"none"}}/>
         <div style={{position:"absolute",bottom:-40,left:-40,width:140,height:140,borderRadius:"50%",background:"rgba(232,149,109,.06)",pointerEvents:"none"}}/>
         <div style={{fontSize:isMobile?12:11,fontWeight:700,color:"#e8789f",letterSpacing:"0.1em",textTransform:"uppercase",marginBottom:10,position:"relative"}}>
           {new Date().toLocaleDateString("ru",{weekday:"long",day:"numeric",month:"long"})}
         </div>
-        <div style={{fontSize:isMobile?34:42,fontWeight:800,color:"#1a1015",lineHeight:1.15,position:"relative"}}>
-          {isMobile ? "Добро\nпожаловать" : "Добро\nпожаловать"}
-        </div>
-        <div style={{fontSize:isMobile?15:13,fontWeight:500,color:"#b09aa8",marginTop:10,position:"relative"}}>
-          Портал группы Менеджмент
-        </div>
+        <div style={{fontSize:isMobile?34:42,fontWeight:800,color:"#1a1015",lineHeight:1.15,position:"relative"}}>Добро<br/>пожаловать</div>
+        <div style={{fontSize:isMobile?15:13,fontWeight:500,color:"#b09aa8",marginTop:10,position:"relative"}}>Портал группы Менеджмент</div>
       </div>
 
-      {/* Stats — шрифты крупнее на мобиле */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:10,marginBottom:20}}>
         {[
           {l:"Файлов",    v:files.length,      c:"#e8789f",bg:"linear-gradient(135deg,#fce8ef,#fdf4f7)"},
-          {l:"Расписаний",v:schedFiles.length, c:"#e8956d",bg:"linear-gradient(135deg,#fdeee6,#fdf7f4)"},
-          {l:"Объявлений",v:anns.length,       c:"#9b87c8",bg:"linear-gradient(135deg,#f0ecf8,#f7f4fc)"},
-          {l:"Категорий", v:CATS.length,       c:"#7ab87a",bg:"linear-gradient(135deg,#ecf5ec,#f4faf4)"},
+          {l:"Расписаний",v:schedFiles.length, c:"#7c5cbf",bg:"linear-gradient(135deg,#ede8f8,#f5f0fc)"},
+          {l:"Объявлений",v:anns.length,       c:"#5aaa72",bg:"linear-gradient(135deg,#e8f5ed,#f2fbf5)"},
+          {l:"Категорий", v:CATS.length,       c:"#e8956d",bg:"linear-gradient(135deg,#fdeee6,#fff7f2)"},
         ].map(s=>(
           <div key={s.l} style={{background:s.bg,borderRadius:18,padding:isMobile?"16px":"20px 22px",textAlign:isMobile?"center":"left"}}>
             <div style={{fontSize:isMobile?34:36,fontWeight:800,color:s.c,lineHeight:1}}>{s.v}</div>
@@ -325,62 +336,58 @@ function Pages({tab,isAdmin,setIsAdmin,setTab,isMobile,loading,files,anns,schedF
       </div>
 
       <Sec title="Последние файлы" action="Все →" onAction={()=>setTab("files")} isMobile={isMobile}>
-        {files.length===0?<Blank text="Файлов пока нет" isMobile={isMobile}/>:files.slice(0,isMobile?3:5).map(f=><FileRow key={f.id} file={f} onView={()=>setViewer(f)} isMobile={isMobile}/>)}
+        {files.length===0?<Blank text="Файлов пока нет" isMobile={isMobile}/>:files.slice(0,isMobile?3:5).map(f=><FileRow key={f.id} file={f} onView={()=>{ const t=getFileType(f.file_name); if(["pdf","image","video","audio"].includes(t)) setViewer(f); else openFile(f.file_url,f.file_name); }} isMobile={isMobile}/>)}
       </Sec>
 
       <Sec title="Объявления" action="Все →" onAction={()=>setTab("news")} mt isMobile={isMobile}>
-        {anns.length===0?<Blank text="Объявлений пока нет" isMobile={isMobile}/>:anns.slice(0,3).map((a,i)=><AnnRow key={a.id} ann={a} idx={i} isMobile={isMobile}/>)}
-      </Sec>
-
-      <Sec title="Расписание" action="Открыть →" onAction={()=>setTab("schedule")} mt isMobile={isMobile}>
-        {schedFiles.length===0?<Blank text="Расписание не загружено" sub="Шох ака загрузит — появится здесь" isMobile={isMobile}/>:(
-          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(3,1fr)",gap:12,marginTop:4}}>
-            {schedFiles.slice(0,isMobile?2:3).map((f,i)=><FileCard key={f.id} file={f} idx={i} isAdmin={isAdmin} setFiles={setFiles} showToast={showToast} onView={()=>setViewer(f)} isMobile={isMobile}/>)}
+        {anns.length===0?<Blank text="Объявлений пока нет" isMobile={isMobile}/>:anns.slice(0,3).map(a=>(
+          <div key={a.id} style={{padding:"12px 0",borderBottom:"1px solid #f5edf0",display:"flex",gap:10,alignItems:"flex-start"}}>
+            <div style={{width:3,minHeight:32,borderRadius:2,background:"linear-gradient(180deg,#e8789f,#e8956d)",flexShrink:0,alignSelf:"stretch"}}/>
+            <div style={{flex:1,minWidth:0}}>
+              {a.pinned&&<span style={{fontSize:isMobile?11:10,fontWeight:700,color:"#e8956d",textTransform:"uppercase",display:"block",marginBottom:2}}>Закреплено</span>}
+              <div style={{fontSize:isMobile?15:14,fontWeight:700,color:"#1a1015",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.title}</div>
+              <div style={{fontSize:isMobile?12:11,color:"#c8a8b8",marginTop:2}}>{new Date(a.created_at).toLocaleDateString("ru")}</div>
+            </div>
           </div>
-        )}
+        ))}
       </Sec>
     </div>
   );
 
-  /* ── SCHEDULE ── */
+  /* SCHEDULE */
   if(tab==="schedule") return(
-    <div style={pad}>
-      <PHead title="Расписание" count={schedFiles.length} isMobile={isMobile} onRefresh={load}/>
-      {schedFiles.length===0?<Blank text="Расписание не загружено" large isMobile={isMobile}/>:(
-        <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(220px,1fr))",gap:14}}>
-          {schedFiles.map((f,i)=><FileCard key={f.id} file={f} idx={i} isAdmin={isAdmin} setFiles={setFiles} showToast={showToast} onView={()=>setViewer(f)} isMobile={isMobile}/>)}
-        </div>
-      )}
-    </div>
+    <SchedulePage schedule={schedule} setSchedule={setSchedule} isAdmin={isAdmin} isMobile={isMobile} showToast={showToast} schedFiles={schedFiles} setViewer={setViewer} setFiles={setFiles} files={files}/>
   );
 
-  /* ── FILES ── */
+  /* FILES */
   if(tab==="files") return(
     <div style={pad}>
       <PHead title="Файлы" count={files.length} isMobile={isMobile} onRefresh={load}/>
       <div style={{display:"flex",gap:8,marginBottom:20,flexWrap:"wrap"}}>
         {["Все",...CATS].map(c=>(
-          <button key={c} onClick={()=>setFilterCat(c)} style={{padding:isMobile?"8px 16px":"7px 14px",borderRadius:20,border:`1px solid ${filterCat===c?"#e8789f":"#f0e0e8"}`,background:filterCat===c?"linear-gradient(135deg,#fce8ef,#fdeee6)":"#fff",color:filterCat===c?"#d95b7e":"#b09aa8",fontSize:isMobile?13:12,fontWeight:filterCat===c?700:500}}>
+          <button key={c} onClick={()=>setFilterCat(c)} style={{padding:isMobile?"8px 16px":"7px 14px",borderRadius:20,border:`1px solid ${filterCat===c?(CAT[c]?.color||"#e8789f"):"#f0e0e8"}`,background:filterCat===c?(CAT[c]?.light||"#fff0f5"):"#fff",color:filterCat===c?(CAT[c]?.color||"#d95b7e"):"#b09aa8",fontSize:isMobile?13:12,fontWeight:filterCat===c?700:500}}>
             {c}
           </button>
         ))}
       </div>
       {filteredFiles.length===0?<Blank text="Файлов нет" large isMobile={isMobile}/>:(
         <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(210px,1fr))",gap:14}}>
-          {filteredFiles.map((f,i)=><FileCard key={f.id} file={f} idx={i} isAdmin={isAdmin} setFiles={setFiles} showToast={showToast} onView={()=>setViewer(f)} isMobile={isMobile}/>)}
+          {filteredFiles.map(f=><FileCard key={f.id} file={f} isAdmin={isAdmin} setFiles={setFiles} showToast={showToast}
+            onView={()=>{ const t=getFileType(f.file_name); if(["pdf","image","video","audio"].includes(t)) setViewer(f); else openFile(f.file_url,f.file_name); }}
+            isMobile={isMobile}/>)}
         </div>
       )}
     </div>
   );
 
-  /* ── NEWS ── */
+  /* NEWS */
   if(tab==="news") return(
     <div style={pad}>
       <PHead title="Объявления" count={anns.length} isMobile={isMobile} onRefresh={load}/>
       {anns.length===0?<Blank text="Объявлений пока нет" large isMobile={isMobile}/>:(
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
-          {anns.map((a,i)=>(
-            <AnnCard key={a.id} ann={a} idx={i} isAdmin={isAdmin} isMobile={isMobile}
+          {anns.map(a=>(
+            <AnnCard key={a.id} ann={a} isAdmin={isAdmin} isMobile={isMobile}
               onDelete={async()=>{try{await api.deleteAnn(a.id);setAnns(p=>p.filter(x=>x.id!==a.id));showToast("Удалено");}catch{showToast("Ошибка","err");}}}
               onEdit={async d=>{try{const u=await api.updateAnn(a.id,d);setAnns(p=>p.map(x=>x.id===a.id?u:x));showToast("Сохранено");}catch{showToast("Ошибка","err");}}}
             />
@@ -390,288 +397,285 @@ function Pages({tab,isAdmin,setIsAdmin,setTab,isMobile,loading,files,anns,schedF
     </div>
   );
 
-  /* ── ADMIN ── */
+  /* ADMIN */
   if(tab==="admin"&&isAdmin) return(
-    <AdminPanel isMobile={isMobile} files={files} anns={anns} setFiles={setFiles} setAnns={setAnns} showToast={showToast} setIsAdmin={setIsAdmin} setTab={setTab} load={load} setViewer={setViewer}/>
+    <AdminPanel isMobile={isMobile} files={files} anns={anns} setFiles={setFiles} setAnns={setAnns} showToast={showToast} setIsAdmin={setIsAdmin} setTab={setTab} load={load} setViewer={setViewer} schedule={schedule} setSchedule={setSchedule}/>
   );
 
   return null;
 }
 
-/* ─── FILE CARD — 5 вариантов ─── */
-function FileCard({file,idx,isAdmin,setFiles,showToast,onView,isMobile}){
+/* ─── SCHEDULE PAGE ─── */
+function SchedulePage({schedule,setSchedule,isAdmin,isMobile,showToast,schedFiles,setViewer,setFiles,files}){
+  const pad={padding:isMobile?"20px 16px":"40px 44px",maxWidth:1000,margin:"0 auto",animation:"fadeUp .3s ease"};
+  const grid = schedule?.grid || {};
+  const subjects = schedule?.subjects || DEFAULT_SUBJECTS;
+  const weekLabel = schedule?.week_label || "";
+
+  return(
+    <div style={pad}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:24,flexWrap:"wrap",gap:10}}>
+        <div>
+          <h1 style={{fontSize:isMobile?28:34,fontWeight:800,color:"#1a1015"}}>Расписание</h1>
+          {weekLabel&&<div style={{fontSize:isMobile?13:12,color:"#b09aa8",marginTop:3}}>{weekLabel}</div>}
+        </div>
+      </div>
+
+      {!schedule||Object.keys(grid).length===0?(
+        <Blank text="Расписание ещё не заполнено" sub={isAdmin?"Зайдите в панель и заполните расписание":"Шох ака скоро добавит расписание"} large isMobile={isMobile}/>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {DAYS.map(day=>{
+            const daySlots = grid[day]||{};
+            const hasPairs = Object.values(daySlots).some(v=>v&&v!=="");
+            if(!hasPairs) return null;
+            return(
+              <div key={day} style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden"}}>
+                <div style={{background:"linear-gradient(135deg,#fde8ef,#fdeee6)",padding:"10px 18px"}}>
+                  <div style={{fontSize:isMobile?14:13,fontWeight:700,color:"#d95b7e"}}>{day}</div>
+                </div>
+                <div style={{padding:"8px 0"}}>
+                  {TIMES.map(time=>{
+                    const subj=daySlots[time];
+                    if(!subj) return null;
+                    return(
+                      <div key={time} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 18px",borderBottom:"1px solid #faf0f4"}}>
+                        <div style={{fontSize:isMobile?12:11,fontWeight:700,color:"#b09aa8",minWidth:isMobile?90:100,flexShrink:0}}>{time}</div>
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:isMobile?15:14,fontWeight:700,color:"#1a1015"}}>{subj}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Прикреплённые файлы расписания */}
+      {schedFiles.length>0&&(
+        <div style={{marginTop:20}}>
+          <div style={{fontSize:isMobile?15:13,fontWeight:700,color:"#1a1015",marginBottom:12}}>Прикреплённые файлы</div>
+          <div style={{display:"grid",gridTemplateColumns:isMobile?"1fr":"repeat(auto-fill,minmax(210px,1fr))",gap:12}}>
+            {schedFiles.map(f=><FileCard key={f.id} file={f} isAdmin={isAdmin} setFiles={setFiles} showToast={showToast}
+              onView={()=>{ const t=getFileType(f.file_name); if(["pdf","image","video","audio"].includes(t)) setViewer(f); else openFile(f.file_url,f.file_name); }}
+              isMobile={isMobile}/>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── FILE CARD — единый стиль ─── */
+function FileCard({file,isAdmin,setFiles,showToast,onView,isMobile}){
   const[editing,setEditing]=useState(false);
   const[name,setName]=useState(file.name);
   const[cat,setCat]=useState(file.category);
-  const variant=CARD_VARIANTS[idx%CARD_VARIANTS.length];
   const type=getFileType(file.file_name);
   const ext=(file.file_name||"").split(".").pop().toUpperCase();
   const isImg=type==="image";
-  const meta=CAT[file.category]||{color:"#a8a0b0",bg:"rgba(168,160,176,.10)",dot:"#a8a0b0",grad:"linear-gradient(135deg,#f5f5f5,#eee)"};
+  const meta=CAT[file.category]||{color:"#e8789f",bg:"rgba(232,120,159,.10)",dot:"#e8789f",light:"#fff0f5"};
 
   const save=async()=>{try{const u=await api.updateFile(file.id,{name,category:cat});setFiles(p=>p.map(x=>x.id===file.id?u:x));setEditing(false);showToast("Сохранено");}catch{showToast("Ошибка","err");}};
   const del=async()=>{try{await api.deleteStorage(file.storage_path);await api.deleteFile(file.id);setFiles(p=>p.filter(x=>x.id!==file.id));showToast("Файл удалён");}catch{showToast("Ошибка","err");}};
 
-  const Preview=()=>(
-    <div onClick={onView} style={{cursor:"pointer",position:"relative",height:90,flexShrink:0,overflow:"hidden"}}>
-      {isImg
-        ?<img src={file.file_url} alt={file.name} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
-        :<div style={{width:"100%",height:"100%",background:variant==="gradient-bg"?meta.grad:meta.bg,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-          {[24,38,18,32,22,30].map((h,i)=>(
-            <div key={i} style={{width:4,height:h,borderRadius:2,background:meta.dot,opacity:.25+i*.1}}/>
-          ))}
-        </div>
-      }
-      <div style={{position:"absolute",top:8,left:8,background:"rgba(255,255,255,.92)",color:meta.color,fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:20,textTransform:"uppercase",letterSpacing:"0.06em"}}>{file.category}</div>
-      <div style={{position:"absolute",top:8,right:8,background:"rgba(255,255,255,.92)",color:"#b09aa8",fontSize:9,fontFamily:"monospace",padding:"2px 7px",borderRadius:8}}>{ext}</div>
-    </div>
-  );
-
-  const Btns=()=>(
-    <div style={{display:"flex",gap:6}}>
-      <button onClick={onView} style={{flex:1,padding:isMobile?"10px 4px":"9px 4px",borderRadius:12,background:"linear-gradient(135deg,#e8789f,#e8956d)",border:"none",color:"#fff",fontWeight:700,fontSize:isMobile?13:12}}>Открыть</button>
-      <a href={file.file_url} target="_blank" rel="noreferrer" download={file.file_name} style={{padding:isMobile?"10px 12px":"9px 11px",borderRadius:12,background:meta.bg,color:meta.color,fontWeight:700,fontSize:14,textDecoration:"none",border:`1px solid ${meta.color}25`,flexShrink:0}}>↓</a>
-      {isAdmin&&<>
-        <button onClick={()=>setEditing(true)} style={{padding:isMobile?"10px 11px":"9px 10px",borderRadius:12,background:"#fdeee6",border:"none",color:"#e8956d",fontSize:14,flexShrink:0}}>✎</button>
-        <button onClick={del} style={{padding:isMobile?"10px 11px":"9px 10px",borderRadius:12,background:"#fff0f3",border:"none",color:"#c0364f",fontSize:14,flexShrink:0}}>✕</button>
-      </>}
-    </div>
-  );
-
-  const EditForm=()=>(
-    <div style={{display:"flex",flexDirection:"column",gap:8}}>
-      <input style={{...T.input,fontSize:isMobile?14:12,padding:"8px 12px"}} value={name} onChange={e=>setName(e.target.value)}/>
-      <select style={{...T.input,fontSize:isMobile?14:12,padding:"8px 12px"}} value={cat} onChange={e=>setCat(e.target.value)}>{CATS.map(c=><option key={c}>{c}</option>)}</select>
-      <div style={{display:"flex",gap:6}}>
-        <button style={{...T.primary,flex:1,padding:"8px",fontSize:isMobile?14:12}} onClick={save}>Сохранить</button>
-        <button style={{...T.ghost,padding:"8px 10px",fontSize:isMobile?14:12}} onClick={()=>setEditing(false)}>✕</button>
-      </div>
-    </div>
-  );
-
-  // FIX: размеры текста в карточках крупнее на мобиле
-  const nameSize = isMobile ? 14 : 13;
-  const metaSize = isMobile ? 12 : 11;
-
-  if(variant==="default") return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <Preview/>
-      <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10,flex:1}}>
-        {editing?<EditForm/>:<>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontSize:nameSize,fontWeight:700,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.4}}>{file.name}</div>
-            <div style={{fontSize:metaSize,color:"#c8b0b8",marginTop:4}}>{new Date(file.created_at).toLocaleDateString("ru")} · {(file.size_bytes/1024).toFixed(0)} КБ</div>
-          </div>
-          <Btns/>
-        </>}
-      </div>
-    </div>
-  );
-
-  if(variant==="wide-accent") return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <Preview/>
-      <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10,flex:1,borderLeft:`3px solid ${meta.dot}`}}>
-        {editing?<EditForm/>:<>
-          <div>
-            <div style={{fontSize:10,fontWeight:700,color:meta.color,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>{file.category}</div>
-            <div style={{fontSize:nameSize,fontWeight:700,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.4}}>{file.name}</div>
-            <div style={{fontSize:metaSize,color:"#c8b0b8",marginTop:4}}>{new Date(file.created_at).toLocaleDateString("ru")}</div>
-          </div>
-          <Btns/>
-        </>}
-      </div>
-    </div>
-  );
-
-  if(variant==="gradient-bg") return(
-    <div style={{background:meta.grad,border:`1px solid ${meta.color}20`,borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <Preview/>
-      <div style={{padding:"14px",display:"flex",flexDirection:"column",gap:10,flex:1}}>
-        {editing?<EditForm/>:<>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontSize:nameSize,fontWeight:800,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.4}}>{file.name}</div>
-            <div style={{fontSize:metaSize,color:meta.color,marginTop:4,fontWeight:600}}>{new Date(file.created_at).toLocaleDateString("ru")} · {(file.size_bytes/1024).toFixed(0)} КБ</div>
-          </div>
-          <Btns/>
-        </>}
-      </div>
-    </div>
-  );
-
-  if(variant==="minimal") return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <div style={{height:5,background:`linear-gradient(90deg,${meta.dot},${meta.dot}88)`,flexShrink:0}}/>
-      <div style={{padding:"16px 14px",display:"flex",flexDirection:"column",gap:12,flex:1}}>
-        {editing?<EditForm/>:<>
-          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:nameSize,fontWeight:700,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:3,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.5}}>{file.name}</div>
-              <div style={{fontSize:metaSize,color:"#c8b0b8",marginTop:5}}>{file.category} · {(file.size_bytes/1024).toFixed(0)} КБ</div>
-              <div style={{fontSize:metaSize,color:"#c8b0b8"}}>{new Date(file.created_at).toLocaleDateString("ru",{day:"numeric",month:"long"})}</div>
-            </div>
-            <div style={{width:40,height:40,borderRadius:12,background:meta.bg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <span style={{fontSize:10,fontWeight:800,color:meta.color,fontFamily:"monospace"}}>{ext}</span>
-            </div>
-          </div>
-          <Btns/>
-        </>}
-      </div>
-    </div>
-  );
-
-  if(variant==="bold-cat") return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <Preview/>
-      <div style={{padding:"14px",display:"flex",flexDirection:"column",gap:10,flex:1}}>
-        {editing?<EditForm/>:<>
-          <div>
-            <div style={{display:"inline-block",background:meta.bg,color:meta.color,fontSize:10,fontWeight:800,padding:"3px 10px",borderRadius:20,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>{file.category}</div>
-            <div style={{fontSize:isMobile?15:14,fontWeight:800,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.35}}>{file.name}</div>
-            <div style={{fontSize:metaSize,color:"#c8b0b8",marginTop:5}}>{new Date(file.created_at).toLocaleDateString("ru")} · {(file.size_bytes/1024).toFixed(0)} КБ</div>
-          </div>
-          <Btns/>
-        </>}
-      </div>
-    </div>
-  );
-
-  return null;
-}
-
-/* ─── ANN ROW (главная) ─── */
-function AnnRow({ann,idx,isMobile}){
-  const accents=["#e8789f","#e8956d","#9b87c8","#7ab87a"];
-  const c=accents[idx%accents.length];
   return(
-    <div style={{padding:"12px 0",borderBottom:"1px solid #f5edf0",display:"flex",gap:10,alignItems:"flex-start"}}>
-      <div style={{width:3,minHeight:32,borderRadius:2,background:c,flexShrink:0,alignSelf:"stretch"}}/>
-      <div style={{flex:1,minWidth:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-          {ann.pinned&&<span style={{fontSize:isMobile?11:10,fontWeight:700,color:"#e8956d",textTransform:"uppercase"}}>Закреплено</span>}
-          <span style={{fontSize:isMobile?11:10,color:"#c8a8b8"}}>{new Date(ann.created_at).toLocaleDateString("ru")}</span>
-        </div>
-        <div style={{fontSize:isMobile?15:14,fontWeight:700,color:"#1a1015",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ann.title}</div>
+    <div style={{background:"#fff",border:`1px solid ${meta.color}25`,borderRadius:20,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+      {/* Превью */}
+      <div onClick={onView} style={{cursor:"pointer",position:"relative",height:90,flexShrink:0,overflow:"hidden",background:meta.bg}}>
+        {isImg
+          ?<img src={file.file_url} alt={file.name} style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+          :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+            {[24,38,18,32,22,30].map((h,i)=>(
+              <div key={i} style={{width:4,height:h,borderRadius:2,background:meta.dot,opacity:.25+i*.1}}/>
+            ))}
+          </div>
+        }
+        {/* Тип в левом углу */}
+        <div style={{position:"absolute",top:8,left:8,background:meta.light,color:meta.color,fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:20,textTransform:"uppercase",letterSpacing:"0.08em"}}>{file.category}</div>
+        {/* Расширение в правом углу */}
+        <div style={{position:"absolute",top:8,right:8,background:"rgba(255,255,255,.9)",color:"#b09aa8",fontSize:9,fontFamily:"monospace",padding:"2px 7px",borderRadius:8}}>{ext}</div>
+      </div>
+
+      {/* Контент */}
+      <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:10,flex:1}}>
+        {editing?(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <input style={{...T.input,fontSize:isMobile?14:12,padding:"8px 12px"}} value={name} onChange={e=>setName(e.target.value)}/>
+            <select style={{...T.input,fontSize:isMobile?14:12,padding:"8px 12px"}} value={cat} onChange={e=>setCat(e.target.value)}>{CATS.map(c=><option key={c}>{c}</option>)}</select>
+            <div style={{display:"flex",gap:6}}>
+              <button style={{...T.primary,flex:1,padding:"8px",fontSize:isMobile?14:12}} onClick={save}>Сохранить</button>
+              <button style={{...T.ghost,padding:"8px 10px",fontSize:isMobile?14:12}} onClick={()=>setEditing(false)}>✕</button>
+            </div>
+          </div>
+        ):(
+          <>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:isMobile?15:14,fontWeight:700,color:"#1a1015",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden",lineHeight:1.4}}>{file.name}</div>
+              <div style={{fontSize:isMobile?12:11,color:"#c8b0b8",marginTop:4}}>{new Date(file.created_at).toLocaleDateString("ru")} · {(file.size_bytes/1024).toFixed(0)} КБ</div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={onView} style={{flex:1,padding:isMobile?"10px":"9px",borderRadius:12,background:`linear-gradient(135deg,${meta.dot},${meta.dot}cc)`,border:"none",color:"#fff",fontWeight:700,fontSize:isMobile?13:12}}>Открыть</button>
+              <a href={file.file_url} download={file.file_name} style={{padding:isMobile?"10px 12px":"9px 11px",borderRadius:12,background:meta.bg,color:meta.color,fontWeight:700,fontSize:14,textDecoration:"none",border:`1px solid ${meta.color}25`,flexShrink:0}}>↓</a>
+              {isAdmin&&<>
+                <button onClick={()=>setEditing(true)} style={{padding:isMobile?"10px 11px":"9px 10px",borderRadius:12,background:"#fdeee6",border:"none",color:"#e8956d",fontSize:14,flexShrink:0}}>✎</button>
+                <button onClick={del} style={{padding:isMobile?"10px 11px":"9px 10px",borderRadius:12,background:"#fff0f3",border:"none",color:"#c0364f",fontSize:14,flexShrink:0}}>✕</button>
+              </>}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-/* ─── ANN CARD — 4 варианта ─── */
-function AnnCard({ann,idx,isAdmin,isMobile,onDelete,onEdit}){
+/* ─── ANN CARD — единый стиль ─── */
+function AnnCard({ann,isAdmin,isMobile,onDelete,onEdit}){
   const[editing,setEditing]=useState(false);
   const[t,setT]=useState(ann.title);
   const[b,setB]=useState(ann.body);
-  const variant=idx%4;
-  const accents=["#e8789f","#e8956d","#9b87c8","#7ab87a"];
-  const bgs=["rgba(232,120,159,.07)","rgba(232,149,109,.07)","rgba(155,135,200,.07)","rgba(122,184,122,.07)"];
-  const c=ann.pinned?"#e8789f":accents[idx%4];
-  const bg=ann.pinned?"rgba(232,120,159,.07)":bgs[idx%4];
-
-  // FIX: шрифты в объявлениях крупнее на мобиле
-  const titleSize = isMobile ? 17 : 15;
-  const bodySize  = isMobile ? 15 : 13;
-  const metaSize  = isMobile ? 12 : 11;
-
-  const EditForm=()=>(
-    <div style={{display:"flex",flexDirection:"column",gap:12}}>
-      <input style={T.input} value={t} onChange={e=>setT(e.target.value)}/>
-      <textarea style={{...T.input,height:100,resize:"vertical"}} value={b} onChange={e=>setB(e.target.value)}/>
-      <div style={{display:"flex",gap:8}}>
-        <button style={{...T.primary,flex:1,padding:"10px"}} onClick={()=>{onEdit({title:t,body:b,emoji:"·"});setEditing(false);}}>Сохранить</button>
-        <button style={{...T.ghost,padding:"10px 16px"}} onClick={()=>setEditing(false)}>Отмена</button>
-      </div>
-    </div>
-  );
-
-  const Actions=()=>isAdmin?(
-    <div style={{display:"flex",gap:6,flexShrink:0}}>
-      <button onClick={()=>setEditing(true)} style={{padding:"7px 10px",borderRadius:10,border:"1px solid #f0dde6",background:"#fff",color:"#b09aa8",fontSize:13,fontWeight:600}}>✎</button>
-      {!ann.pinned&&<button onClick={onDelete} style={{padding:"7px 10px",borderRadius:10,border:"1px solid #f5c0cc",background:"#fff0f3",color:"#c0364f",fontSize:13,fontWeight:600}}>✕</button>}
-    </div>
-  ):null;
-
-  if(variant===0) return(
+  const titleSize=isMobile?17:15;
+  const bodySize=isMobile?15:13;
+  const metaSize=isMobile?12:11;
+  return(
     <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,padding:isMobile?"18px":"20px 24px"}}>
-      {editing?<EditForm/>:(
+      {editing?(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <input style={T.input} value={t} onChange={e=>setT(e.target.value)}/>
+          <textarea style={{...T.input,height:100,resize:"vertical"}} value={b} onChange={e=>setB(e.target.value)}/>
+          <div style={{display:"flex",gap:8}}>
+            <button style={{...T.primary,flex:1,padding:"10px"}} onClick={()=>{onEdit({title:t,body:b,emoji:"·"});setEditing(false);}}>Сохранить</button>
+            <button style={{...T.ghost,padding:"10px 16px"}} onClick={()=>setEditing(false)}>Отмена</button>
+          </div>
+        </div>
+      ):(
         <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
-          <div style={{width:4,borderRadius:2,alignSelf:"stretch",minHeight:40,background:ann.pinned?`linear-gradient(180deg,#e8789f,#e8956d)`:`linear-gradient(180deg,${c},${c}88)`,flexShrink:0}}/>
+          <div style={{width:4,borderRadius:2,alignSelf:"stretch",minHeight:40,background:ann.pinned?"linear-gradient(180deg,#e8789f,#e8956d)":"linear-gradient(180deg,#e8789f88,#e8956d88)",flexShrink:0}}/>
           <div style={{flex:1,minWidth:0}}>
             {ann.pinned&&<div style={{fontSize:metaSize,fontWeight:700,color:"#e8956d",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Закреплено</div>}
             <div style={{fontSize:metaSize,color:"#c8b0b8",marginBottom:6}}>{new Date(ann.created_at).toLocaleDateString("ru",{day:"numeric",month:"long",year:"numeric"})}</div>
             <div style={{fontSize:titleSize,fontWeight:700,color:"#1a1015",marginBottom:8}}>{ann.title}</div>
             <div style={{fontSize:bodySize,color:"#7a6070",lineHeight:1.7}}>{ann.body}</div>
           </div>
-          <Actions/>
-        </div>
-      )}
-    </div>
-  );
-
-  if(variant===1) return(
-    <div style={{background:bg,border:`1px solid ${c}20`,borderRadius:20,padding:isMobile?"18px":"20px 24px"}}>
-      {editing?<EditForm/>:(
-        <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
-          <div style={{flex:1,minWidth:0}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <div style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}/>
-              {ann.pinned&&<span style={{fontSize:metaSize,fontWeight:700,color:"#e8956d",textTransform:"uppercase"}}>Закреплено</span>}
-              <span style={{fontSize:metaSize,color:"#c8b0b8"}}>{new Date(ann.created_at).toLocaleDateString("ru",{day:"numeric",month:"long"})}</span>
+          {isAdmin&&(
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              <button onClick={()=>setEditing(true)} style={{padding:"7px 10px",borderRadius:10,border:"1px solid #f0dde6",background:"#fff",color:"#b09aa8",fontSize:13,fontWeight:600}}>✎</button>
+              {!ann.pinned&&<button onClick={onDelete} style={{padding:"7px 10px",borderRadius:10,border:"1px solid #f5c0cc",background:"#fff0f3",color:"#c0364f",fontSize:13,fontWeight:600}}>✕</button>}
             </div>
-            <div style={{fontSize:titleSize,fontWeight:800,color:"#1a1015",marginBottom:8}}>{ann.title}</div>
-            <div style={{fontSize:bodySize,color:"#7a6070",lineHeight:1.7}}>{ann.body}</div>
-          </div>
-          <Actions/>
+          )}
         </div>
       )}
     </div>
   );
+}
 
-  if(variant===2) return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,overflow:"hidden"}}>
-      <div style={{height:4,background:`linear-gradient(90deg,${c},${c}55)`}}/>
-      <div style={{padding:isMobile?"16px":"18px 24px"}}>
-        {editing?<EditForm/>:(
-          <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-                <div style={{fontSize:titleSize,fontWeight:800,color:"#1a1015"}}>{ann.title}</div>
-                {ann.pinned&&<span style={{fontSize:metaSize,fontWeight:700,color:"#e8956d",textTransform:"uppercase"}}>📌 Закреплено</span>}
+/* ─── SCHEDULE EDITOR ─── */
+function ScheduleEditor({schedule,setSchedule,showToast,isMobile}){
+  const initGrid=()=>{
+    const g={};
+    DAYS.forEach(d=>{ g[d]={}; TIMES.forEach(t=>{ g[d][t]=""; }); });
+    return g;
+  };
+  const[grid,setGrid]=useState(()=>{ const s=schedule?.grid; if(s){ const g=initGrid(); Object.keys(g).forEach(d=>{ if(s[d]) Object.keys(g[d]).forEach(t=>{ g[d][t]=s[d][t]||""; }); }); return g; } return initGrid(); });
+  const[subjects,setSubjects]=useState(schedule?.subjects||[...DEFAULT_SUBJECTS]);
+  const[weekLabel,setWeekLabel]=useState(schedule?.week_label||"");
+  const[saving,setSaving]=useState(false);
+  const[editSubjects,setEditSubjects]=useState(false);
+
+  const setSlot=(day,time,val)=>setGrid(prev=>({...prev,[day]:{...prev[day],[time]:val}}));
+
+  const save=async()=>{
+    setSaving(true);
+    try{
+      const s=await api.saveSchedule({grid,subjects,week_label:weekLabel});
+      setSchedule(s);
+      showToast("Расписание сохранено!");
+    }catch(e){showToast("Ошибка: "+e.message,"err");}
+    finally{setSaving(false);}
+  };
+
+  const clear=()=>{ setGrid(initGrid()); };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:20}}>
+      {/* Неделя */}
+      <div>
+        <label style={{...T.label,fontSize:isMobile?12:11}}>Неделя (например: 12–18 мая 2026)</label>
+        <input style={{...T.input,fontSize:isMobile?15:14}} placeholder="12–18 мая 2026" value={weekLabel} onChange={e=>setWeekLabel(e.target.value)}/>
+      </div>
+
+      {/* Редактор предметов */}
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+          <label style={{...T.label,fontSize:isMobile?12:11,marginBottom:0}}>Предметы (6 штук)</label>
+          <button onClick={()=>setEditSubjects(v=>!v)} style={{...T.ghost,padding:"5px 12px",fontSize:12}}>{editSubjects?"Готово":"Редактировать"}</button>
+        </div>
+        {editSubjects?(
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {subjects.map((s,i)=>(
+              <div key={i} style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{width:22,height:22,borderRadius:6,background:"linear-gradient(135deg,#fde8ef,#fdeee6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#e8789f",flexShrink:0}}>{i+1}</div>
+                <input style={{...T.input,fontSize:isMobile?14:13,padding:"8px 12px"}} value={s} onChange={e=>{const n=[...subjects];n[i]=e.target.value;setSubjects(n);}}/>
               </div>
-              <div style={{fontSize:bodySize,color:"#7a6070",lineHeight:1.7,marginBottom:10}}>{ann.body}</div>
-              <div style={{fontSize:metaSize,color:"#c8b0b8",fontWeight:600}}>{new Date(ann.created_at).toLocaleDateString("ru",{day:"numeric",month:"long",year:"numeric"})}</div>
-            </div>
-            <Actions/>
+            ))}
+          </div>
+        ):(
+          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+            {subjects.map((s,i)=>(
+              <div key={i} style={{background:"linear-gradient(135deg,#fde8ef,#fdeee6)",borderRadius:20,padding:"6px 14px",fontSize:isMobile?13:12,fontWeight:600,color:"#d95b7e"}}>{s}</div>
+            ))}
           </div>
         )}
       </div>
-    </div>
-  );
 
-  if(variant===3) return(
-    <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:20,padding:isMobile?"18px":"20px 24px"}}>
-      {editing?<EditForm/>:(
-        <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
-          <div style={{flex:1,minWidth:0}}>
-            {ann.pinned&&<div style={{fontSize:metaSize,fontWeight:700,color:"#e8956d",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:5}}>Закреплено</div>}
-            <div style={{fontSize:titleSize,fontWeight:700,color:"#1a1015",marginBottom:8}}>{ann.title}</div>
-            <div style={{fontSize:bodySize,color:"#7a6070",lineHeight:1.7,marginBottom:12}}>{ann.body}</div>
-            <div style={{display:"inline-block",background:bg||"rgba(232,120,159,.07)",borderRadius:20,padding:"4px 12px"}}>
-              <span style={{fontSize:metaSize,color:c,fontWeight:600}}>{new Date(ann.created_at).toLocaleDateString("ru",{day:"numeric",month:"long",year:"numeric"})}</span>
+      {/* Сетка расписания */}
+      <div>
+        <label style={{...T.label,fontSize:isMobile?12:11}}>Расписание по дням</label>
+        <div style={{display:"flex",flexDirection:"column",gap:12,marginTop:8}}>
+          {DAYS.map(day=>(
+            <div key={day} style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:18,overflow:"hidden"}}>
+              <div style={{background:"linear-gradient(135deg,#fde8ef,#fdeee6)",padding:"10px 16px"}}>
+                <div style={{fontSize:isMobile?14:13,fontWeight:700,color:"#d95b7e"}}>{day}</div>
+              </div>
+              <div style={{padding:"10px 12px",display:"flex",flexDirection:"column",gap:8}}>
+                {TIMES.map(time=>(
+                  <div key={time} style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{fontSize:isMobile?11:10,fontWeight:700,color:"#c8b0b8",minWidth:isMobile?95:105,flexShrink:0}}>{time}</div>
+                    <div style={{flex:1,display:"flex",gap:6}}>
+                      <select
+                        style={{...T.input,fontSize:isMobile?13:12,padding:"7px 10px",flex:1,color:grid[day][time]?"#1a1015":"#c8b0b8"}}
+                        value={grid[day][time]||""}
+                        onChange={e=>setSlot(day,time,e.target.value)}
+                      >
+                        <option value="">— нет пары —</option>
+                        {subjects.filter(s=>s).map(s=><option key={s} value={s}>{s}</option>)}
+                      </select>
+                      {grid[day][time]&&(
+                        <button onClick={()=>setSlot(day,time,"")} style={{padding:"7px 10px",borderRadius:10,background:"#fff0f3",border:"none",color:"#c0364f",fontSize:13,flexShrink:0}}>✕</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-          <Actions/>
+          ))}
         </div>
-      )}
+      </div>
+
+      <div style={{display:"flex",gap:10}}>
+        <button style={{...T.primary,flex:1,opacity:saving?.7:1,fontSize:isMobile?15:14}} onClick={save} disabled={saving}>{saving?"Сохраняется…":"Сохранить расписание"}</button>
+        <button style={{...T.ghost,padding:"13px 16px",fontSize:isMobile?14:13}} onClick={clear}>Очистить</button>
+      </div>
     </div>
   );
-
-  return null;
 }
 
-/* ─── ADMIN ─── */
-function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,setTab,load,setViewer}){
-  const[aTab,setATab]=useState("upload");
+/* ─── ADMIN PANEL ─── */
+function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,setTab,load,setViewer,schedule,setSchedule}){
+  const[aTab,setATab]=useState("schedule");
   const[uName,setUName]=useState("");
   const[uCat,setUCat]=useState("Расписание");
   const[uFile,setUFile]=useState(null);
@@ -684,6 +688,7 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
   const[posting,setPosting]=useState(false);
   const fileRef=useRef();
   const pad={padding:isMobile?"20px 16px":"40px 44px",maxWidth:1000,margin:"0 auto",animation:"fadeUp .3s ease"};
+  const fs=isMobile?15:14;
 
   const pick=f=>{if(!f)return;setUFile(f);if(!uName)setUName(f.name.replace(/\.[^.]+$/,""));};
 
@@ -693,11 +698,9 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
     try{
       const ext=uFile.name.split(".").pop();
       const path=`${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-      setPct(40);
-      const url=await api.uploadFile(uFile,path);setPct(75);
-      const rec=await api.addFile({name:uName.trim(),category:uCat,file_name:uFile.name,file_url:url,storage_path:path,size_bytes:uFile.size});setPct(100);
-      setFiles(prev=>[rec,...prev]);
-      setUName("");setUFile(null);if(fileRef.current)fileRef.current.value="";
+      setPct(40); const url=await api.uploadFile(uFile,path); setPct(75);
+      const rec=await api.addFile({name:uName.trim(),category:uCat,file_name:uFile.name,file_url:url,storage_path:path,size_bytes:uFile.size}); setPct(100);
+      setFiles(prev=>[rec,...prev]); setUName(""); setUFile(null); if(fileRef.current)fileRef.current.value="";
       showToast("Файл загружен в облако");
     }catch(e){showToast("Ошибка: "+e.message,"err");}
     finally{setUploading(false);setPct(0);}
@@ -708,14 +711,11 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
     setPosting(true);
     try{
       const a=await api.addAnn({title:aTitle.trim(),body:aBody.trim(),emoji:"·",pinned:aPinned});
-      setAnns(prev=>[a,...prev]);
-      setATitle("");setABody("");setAPinned(false);
+      setAnns(prev=>[a,...prev]); setATitle(""); setABody(""); setAPinned(false);
       showToast("Объявление опубликовано");
     }catch(e){showToast("Ошибка: "+e.message,"err");}
     finally{setPosting(false);}
   };
-
-  const fs = isMobile ? 15 : 14; // шрифт форм на мобиле
 
   return(
     <div style={pad}>
@@ -731,24 +731,39 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
       </div>
 
       <div style={{display:"flex",marginBottom:24,borderBottom:"2px solid #f0e8ec",overflowX:"auto"}}>
-        {[["upload","Загрузить файл"],["announce","Объявление"],["manage","Управление"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setATab(id)} style={{padding:isMobile?"11px 18px":"10px 18px",border:"none",background:"transparent",fontSize:isMobile?14:13,fontWeight:aTab===id?700:500,color:aTab===id?"#d95b7e":"#b09aa8",borderBottom:`2px solid ${aTab===id?"#e8789f":"transparent"}`,marginBottom:-2,transition:"all .15s",whiteSpace:"nowrap"}}>
+        {[["schedule","Расписание"],["upload","Загрузить файл"],["announce","Объявление"],["manage","Управление"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setATab(id)} style={{padding:isMobile?"11px 14px":"10px 18px",border:"none",background:"transparent",fontSize:isMobile?13:13,fontWeight:aTab===id?700:500,color:aTab===id?"#d95b7e":"#b09aa8",borderBottom:`2px solid ${aTab===id?"#e8789f":"transparent"}`,marginBottom:-2,transition:"all .15s",whiteSpace:"nowrap"}}>
             {label}
           </button>
         ))}
       </div>
 
+      {/* SCHEDULE EDITOR */}
+      {aTab==="schedule"&&(
+        <ScheduleEditor schedule={schedule} setSchedule={setSchedule} showToast={showToast} isMobile={isMobile}/>
+      )}
+
+      {/* UPLOAD */}
       {aTab==="upload"&&(
         <div style={{maxWidth:520}}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div><label style={{...T.label,fontSize:isMobile?12:11}}>Название файла</label><input style={{...T.input,fontSize:fs}} placeholder="например: Расписание — Май 2026" value={uName} onChange={e=>setUName(e.target.value)}/></div>
-            <div><label style={{...T.label,fontSize:isMobile?12:11}}>Категория</label><select style={{...T.input,fontSize:fs}} value={uCat} onChange={e=>setUCat(e.target.value)}>{CATS.map(c=><option key={c}>{c}</option>)}</select></div>
+            <div><label style={{...T.label,fontSize:isMobile?12:11}}>Название файла</label><input style={{...T.input,fontSize:fs}} placeholder="например: Лекция №3 — Маркетинг" value={uName} onChange={e=>setUName(e.target.value)}/></div>
+            <div>
+              <label style={{...T.label,fontSize:isMobile?12:11}}>Категория</label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {CATS.map(c=>(
+                  <button key={c} onClick={()=>setUCat(c)} style={{padding:"8px 16px",borderRadius:20,border:`1.5px solid ${uCat===c?CAT[c].color:"#f0e0e8"}`,background:uCat===c?CAT[c].light:"#fff",color:uCat===c?CAT[c].color:"#b09aa8",fontSize:13,fontWeight:uCat===c?700:500}}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div>
               <label style={{...T.label,fontSize:isMobile?12:11}}>Файл</label>
               <div onClick={()=>!uploading&&fileRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);pick(e.dataTransfer.files[0]);}}
-                style={{border:`1.5px dashed ${dragging?"#e8789f":uFile?"#7ab87a":"#f0d8e0"}`,borderRadius:16,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"#fce8ef":uFile?"#ecf5ec":"#fdfafb",transition:"all .2s"}}>
-                <div style={{fontSize:isMobile?15:13,fontWeight:600,color:uFile?"#5a9a5a":"#b09aa8"}}>{uFile?uFile.name:"Нажмите или перетащите файл"}</div>
-                {uFile&&<div style={{fontSize:isMobile?13:11,color:"#a0b8a0",marginTop:4}}>{(uFile.size/1024/1024).toFixed(2)} МБ</div>}
+                style={{border:`1.5px dashed ${dragging?"#e8789f":uFile?"#5aaa72":"#f0d8e0"}`,borderRadius:16,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"#fce8ef":uFile?"#e8f5ed":"#fdfafb",transition:"all .2s"}}>
+                <div style={{fontSize:isMobile?15:13,fontWeight:600,color:uFile?"#3a8a52":"#b09aa8"}}>{uFile?uFile.name:"Нажмите или перетащите файл"}</div>
+                {uFile&&<div style={{fontSize:isMobile?13:11,color:"#6ab87a",marginTop:4}}>{(uFile.size/1024/1024).toFixed(2)} МБ</div>}
                 {!uFile&&<div style={{fontSize:isMobile?13:11,color:"#c8b0b8",marginTop:6}}>PDF, Word, Excel, изображения, видео и другие</div>}
               </div>
               <input ref={fileRef} type="file" style={{display:"none"}} onChange={e=>pick(e.target.files[0])}/>
@@ -766,6 +781,7 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
         </div>
       )}
 
+      {/* ANNOUNCE */}
       {aTab==="announce"&&(
         <div style={{maxWidth:520}}>
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -782,6 +798,7 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
         </div>
       )}
 
+      {/* MANAGE */}
       {aTab==="manage"&&(
         <div style={{display:"flex",flexDirection:"column",gap:24}}>
           <div>
@@ -790,7 +807,7 @@ function AdminPanel({isMobile,files,anns,setFiles,setAnns,showToast,setIsAdmin,s
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {files.map(f=>(
                   <ManageRow key={f.id} file={f} isMobile={isMobile}
-                    onView={()=>setViewer(f)}
+                    onView={()=>{ const t=getFileType(f.file_name); if(["pdf","image","video","audio"].includes(t)) setViewer(f); else openFile(f.file_url,f.file_name); }}
                     onDelete={async()=>{try{await api.deleteStorage(f.storage_path);await api.deleteFile(f.id);setFiles(p=>p.filter(x=>x.id!==f.id));showToast("Файл удалён");}catch(e){showToast("Ошибка","err");}}}
                     onSave={async(name,cat)=>{try{const u=await api.updateFile(f.id,{name,category:cat});setFiles(p=>p.map(x=>x.id===f.id?u:x));showToast("Сохранено");}catch{showToast("Ошибка","err");}}}
                   />
@@ -845,7 +862,7 @@ function ManageRow({file,onDelete,onSave,onView,isMobile}){
   const[editing,setEditing]=useState(false);
   const[n,setN]=useState(file.name);
   const[c,setC]=useState(file.category);
-  const meta=CAT[file.category]||{dot:"#a8a0b0"};
+  const meta=CAT[file.category]||{dot:"#e8789f"};
   return(
     <div style={{background:"#fff",border:"1px solid #f0e8ec",borderRadius:14,padding:"12px 14px"}}>
       {editing?(
@@ -874,7 +891,7 @@ function ManageRow({file,onDelete,onSave,onView,isMobile}){
 }
 
 function FileRow({file,onView,isMobile}){
-  const meta=CAT[file.category]||{color:"#a8a0b0",dot:"#a8a0b0"};
+  const meta=CAT[file.category]||{color:"#e8789f",dot:"#e8789f"};
   return(
     <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid #f5edf0"}}>
       <div style={{width:3,height:34,borderRadius:2,background:meta.dot,flexShrink:0}}/>
